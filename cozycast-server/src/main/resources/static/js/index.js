@@ -60,7 +60,8 @@ export var state = {
     admin: {
         username: "",
         password: ""
-    }
+    },
+    scheduleSidebar: false
 };
 
 export function queryParams(params) {

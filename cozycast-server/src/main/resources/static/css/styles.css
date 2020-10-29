@@ -33,6 +33,10 @@ html, body, #pagecontent, #videosizer {
     padding: 0;
 }
 
+.hidden {
+    display: none;
+}
+
 #pagecontent {
     display: grid;
     grid:
@@ -82,7 +86,7 @@ html, body, #pagecontent, #videosizer {
     display: grid;
     grid-gap: .5em;
     padding: .5em;
-    grid-template-columns: 1fr 1fr 3em 3em 1fr;
+    grid-template-columns: 1fr 1fr 1fr 3em 3em 1fr;
 }
 
 #controls {
@@ -266,7 +270,7 @@ html, body, #pagecontent, #videosizer {
 }
 
 .volumeSlider:focus {
-outline: 0;
+    outline: 0;
 }
 
 .volumeSlider::-moz-range-thumb, .volumeSlider::-webkit-slider-thumb {
@@ -622,6 +626,63 @@ outline: 0;
 }
 
 /* Admin.js End */
+
+/* ScheduleSidebar.js */
+
+#schedule {
+	grid-area: video;
+	position: relative;
+    background-color: #123;
+    color: #fff;
+}
+
+#schedule > .title {
+    display: flex;
+    align-self: stretch;
+    font-size: 4em;
+}
+
+#schedule > .title > div {
+    text-align: center;
+    flex-grow: 1;
+}
+
+#schedule table {
+    width: 80%;
+    margin: 0 auto;
+}
+
+#schedule th {
+    text-align: center;
+    width: 10em;
+}
+
+#schedule td {
+    text-align: center;
+}
+
+#schedule td div {
+	width: 80%;
+	margin: 0 auto;
+}
+
+#schedule .none {
+    background-color: #257dd5
+}
+
+#schedule .one {
+    background-color: #ec8f2b
+}
+
+#schedule .few {
+    background-color: #e1651a
+}
+
+#schedule .many {
+    background-color: #e64b27
+}
+
+/* ScheduleSidebar.js */
 
 
 @media (max-width: 780px) {
