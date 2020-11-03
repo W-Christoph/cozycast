@@ -629,20 +629,25 @@ html, body, #pagecontent, #videosizer {
 
 /* ScheduleSidebar.js */
 
+#schedule .content {
+    flex: 1;
+}
+
 #schedule {
 	grid-area: video;
 	position: relative;
     background-color: #123;
     color: #fff;
+    display: flex;
 }
 
-#schedule > .title {
+#schedule .title {
     display: flex;
     align-self: stretch;
     font-size: 4em;
 }
 
-#schedule > .title > div {
+#schedule .title > div {
     text-align: center;
     flex-grow: 1;
 }
@@ -661,7 +666,7 @@ html, body, #pagecontent, #videosizer {
     text-align: center;
 }
 
-#schedule td div {
+.availability td div {
 	width: 80%;
 	margin: 0 auto;
 }
@@ -682,7 +687,75 @@ html, body, #pagecontent, #videosizer {
     background-color: #e64b27
 }
 
-/* ScheduleSidebar.js */
+#schedule .navigation {
+    display: flex;
+    flex-direction: column;
+    padding: 0.5em;
+}
+
+#schedule .navigation .btn {
+    margin: 0.25em;
+}
+
+/* ScheduleSidebar.js End */
+
+/* ScheduleCalendar.js */
+
+.calendar .entry {
+    margin: 1em;
+    padding: 1em;
+}
+
+/* ScheduleCalendar.js End */
+
+/* ScheduleEditAvailability.js */
+
+.edit.availability .days {
+    display: flex;
+    background-color: black;
+    flex: 1;
+}
+
+.edit.availability .day {
+    display: flex;
+    flex-direction: column;
+}
+
+.edit.availability .header {
+    margin: 1em;
+}
+
+.edit.availability .selectable {
+    height: 40em;
+    position: relative;
+}
+
+.edit.availability .range {
+    width: 100%;
+    background-color: blue;
+    position: absolute;
+	grid: "top" 1.5em "body" 1fr "bottom" 1.5em;
+    display: grid;
+    font-size: 0.75em;
+    overflow: hidden;
+}
+
+.edit.availability .range .body {
+    background-color: red;
+}
+
+.edit.availability .range * {
+    width: 100%;
+    background-color: blue;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+/* ScheduleEditAvailability.js End */
 
 
 @media (max-width: 780px) {

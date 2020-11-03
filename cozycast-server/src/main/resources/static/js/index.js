@@ -61,7 +61,11 @@ export var state = {
         username: "",
         password: ""
     },
-    scheduleSidebar: false
+    scheduleSidebar: false,
+    scheduleMenu: "ROOM_AVAILABILITY",
+    editSchedule: {
+        days: []
+    }
 };
 
 export function queryParams(params) {
@@ -71,8 +75,10 @@ export function queryParams(params) {
 }
 
 export function updateState(fun) {
-    fun(state)
-    globalVar.callback(state);
+    var result = fun(state)
+    if(result !== false)  {
+        globalVar.callback(state);
+    }
 }
 
 class App extends Component {

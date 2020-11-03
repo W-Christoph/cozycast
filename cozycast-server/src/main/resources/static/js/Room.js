@@ -160,7 +160,6 @@ export function pauseVideo(e) {
 
 function changeVolume(e) {
     updateState(function(state) {
-        console.log(e.target.value)
         state.volume = e.target.value;
     })
 }
@@ -322,8 +321,6 @@ function isBanned() {
         return true
     } else {
         var expiration = new Date(state.banned)
-        console.log(new Date().getTime())
-        console.log(expiration.getTime())
         if(new Date().getTime() < expiration.getTime()) {
             return true
         }
