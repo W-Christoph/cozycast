@@ -134,6 +134,9 @@ export class ScheduleEditAvailability extends Component {
             </div>
             <div class="days"
                 onmouseleave=${onStop}>
+                <div class="day">
+                    <div class="header">Time</div>
+                </div>
                 ${state.editSchedule.days.map((available, day) => html`
                     <div class="day">
                         <div class="header">${dayOfWeek[day]}</div>
