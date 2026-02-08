@@ -10,6 +10,10 @@ import org.kurento.client.KurentoClient
 class KurentoFactory {
     @Singleton
     KurentoClient kurentoClient() {
-        return KurentoClient.create("ws://${System.getenv("KURENTO_IP")}:8888/kurento")
+        String ip = System.getenv("KURENTO_IP")
+        if (!ip || ip.trim().isEmpty()) {
+            throw new IllegalStateException("Environment variable KURENTO_IP is missing or empty")
+        }
+        return KurentoClient.create("ws://${ip}:8888/kurento")
     }
 }

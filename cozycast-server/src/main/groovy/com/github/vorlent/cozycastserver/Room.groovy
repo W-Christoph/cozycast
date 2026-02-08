@@ -220,7 +220,7 @@ class Room {
         users.each { key, user ->
             if (user != null) {
                 user.connections.each { sessionId, connection ->
-                    connection.webRtcEndpoint?.release()
+                    connection.mediaConnection?.release()
                     if (connection.webSocketSession) {
                         try {
                             connection.webSocketSession.close(restart ? CloseReason.SERVICE_RESTART : CloseReason.GOING_AWAY)
@@ -256,7 +256,7 @@ class Room {
         users.each { key, user ->
             if (user != null) {
                 user.connections.each { sessionId, connection ->
-                    connection.webRtcEndpoint?.release()
+                    connection.mediaConnection?.release() // Decoupled
                     if (connection.webSocketSession) {
                         connection.webSocketSession.send(event).subscribe({ arg -> '' })
                     }

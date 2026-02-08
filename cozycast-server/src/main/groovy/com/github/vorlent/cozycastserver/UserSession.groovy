@@ -6,14 +6,15 @@ import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-import org.kurento.client.WebRtcEndpoint
-
 class UserEndpoint {
-    WebRtcEndpoint webRtcEndpoint
+
+    MediaConnection mediaConnection // Decoupled
     WebSocketSession webSocketSession
+
 }
 
 class RateLimiter {
+
     private final long capacity
     private final double tokensPerSecond
     private final AtomicLong tokens
@@ -39,9 +40,11 @@ class RateLimiter {
             lastRefillTime = now
         }
     }
+
 }
 
 class UserSession {
+
     final ConcurrentHashMap<String, UserEndpoint> connections = new ConcurrentHashMap<>()
     String username
     String nickname
@@ -59,9 +62,13 @@ class UserSession {
     Boolean image_permission = false
     ZonedDateTime lastTimeSeen
     ZonedDateTime userEntryTime
-    RateLimiter rateLimiter = new RateLimiter(5,(double) 1)
+    RateLimiter rateLimiter = new RateLimiter(5, (double) 1)
 
     public void release(String id) {
-        connections.computeIfPresent(id, (k,v) -> {v.webRtcEndpoint?.release(); return v});
+        connections.computeIfPresent(id, (k, v) -> {
+            v.mediaConnection?.release() // Decoupled cleanup
+            return v
+        });
     }
+
 }
