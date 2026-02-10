@@ -11,7 +11,7 @@ import io.micronaut.http.server.types.files.StreamedFile
 import io.micronaut.http.MediaType
 import io.micronaut.http.HttpRequest
 import io.micronaut.core.annotation.Nullable
-import javax.inject.Inject
+import jakarta.inject.Inject
 
 @Controller("/")
 public class IndexController {

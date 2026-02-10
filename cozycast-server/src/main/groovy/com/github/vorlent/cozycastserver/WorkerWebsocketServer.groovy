@@ -13,19 +13,12 @@ import java.util.regex.Matcher
 
 import groovy.util.logging.Slf4j
 
-class SDPOffer {
+// Add a new event class
+class WHIPOffer {
 
-    String type = 'sdpOffer'
-    String ip
-    String videoPort
-    String audioPort
-
-}
-
-class SDPAnswer {
-
-    String type = 'sdpAnswer'
-    String content
+    String type = 'whipOffer'
+    String url
+    String key
 
 }
 
@@ -62,22 +55,24 @@ class WorkerWebsocketServer {
     @OnOpen
     void onOpen(String room, String room_key, WebSocketSession session) {
         if (room_key != accessKey) {
-            log.info "tried to access $room with invalid key $room_key"
             session.close()
             return
         }
 
         WorkerSession worker = new WorkerSession()
         worker.websocket = session
-        WorkerMediaInfo info = mediaManager.setupWorker(worker) // Isolated Kurento logic
+
+        // Get WHIP info from LiveKit
+        WorkerMediaInfo info = mediaManager.setupWorker(room)
 
         def roomObj = roomRegistry.getRoom(room)
         session.sendSync(new UpdateWorkerSettingsEvent(settings: roomObj.videoSettings, restart: false))
-        session.sendSync(new SDPOffer(
-            ip: System.getenv('KURENTO_IP'),
-            videoPort: info.videoPort,
-            audioPort: info.audioPort
-        ))
+
+        // Send WHIP details to the worker
+        session.sendSync(new WHIPOffer(
+        url: info.whipUrl,
+        key: info.streamKey
+    ))
         roomObj.startStream(worker)
     }
 
@@ -97,7 +92,8 @@ class WorkerWebsocketServer {
     @OnMessage
     void onMessage(String room, Map answer, WebSocketSession session) {
         if (answer.action == 'sdpAnswer') {
-            mediaManager.processWorkerAnswer(roomRegistry.getRoom(room).worker, answer.content)
+            // Pass the room name to the handler
+            mediaManager.processWorkerAnswer(roomRegistry.getRoom(room).worker, room, (String)answer.content)
         }
         if (answer.action == 'keepalive') {
             session.sendSync([

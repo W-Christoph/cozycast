@@ -1,4 +1,4 @@
-FROM eclipse-temurin:11.0.20_8-jdk-jammy
+FROM eclipse-temurin:17-jdk-jammy
 
 EXPOSE 8080
 
@@ -13,6 +13,6 @@ RUN ./gradlew
 COPY . /root/cozycast/cozycast-server
 RUN ./gradlew assemble
 
-ENV JAVA_OPTS="$JAVA_OPS -Xms32M -Xmx128M"
+ENV JAVA_OPTS="$JAVA_OPTS -Xms32M -Xmx128M"
 
 CMD java -Dcom.sun.management.jmxremote -noverify ${JAVA_OPTS} -jar build/libs/cozycast-server-*-all.jar

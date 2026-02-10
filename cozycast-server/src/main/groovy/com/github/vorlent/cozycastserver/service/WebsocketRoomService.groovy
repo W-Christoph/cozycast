@@ -119,21 +119,16 @@ class WebsocketRoomService {
 
     private void start(Room room, WebSocketSession session, Map jsonMessage, String username) {
         final UserSession user = room.users.get(username)
-        user?.release(session.getId())
-
-        if (!room.worker) {
-            throw new RuntimeException('NO WORKER FOUND')
-        }
-
-        String sdpAnswer = mediaManager.processPlayerOffer(
-            room.worker,
-            user,
-            session.getId(),
-            jsonMessage.sdpOffer,
-            { candidate -> sendMessage(session, new IceCandidateEvent(candidate: candidate)) }
-        )
-
-        sendMessage(session, new StartResponse(sdpAnswer: sdpAnswer, videoSettings: room.videoSettings))
+        
+        // Generate a token for the player
+        String token = mediaManager.getPlayerToken(room.name, username, user.nickname)
+    
+        // Return the token. The frontend client will use this with the LiveKit SDK.
+        sendMessage(session, [
+            action: 'livekitToken',
+            token: token,
+            room: room.name
+        ])
     }
 
     private void typing(Room room, WebSocketSession session, Map jsonMessage, String username) {
@@ -1108,8 +1103,9 @@ class WebsocketRoomService {
                         userMuted(currentRoom, session, jsonMessage, username)
                         break
                     case 'start':
+                        log.info "here"
                         start(currentRoom, session, jsonMessage, username)
-                        break
+                        break 
                     case 'stop':
                         stop(currentRoom, sessionId)
                         break

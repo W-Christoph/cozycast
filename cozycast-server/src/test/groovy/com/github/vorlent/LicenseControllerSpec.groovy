@@ -10,7 +10,7 @@ import spock.lang.AutoCleanup
 import spock.lang.Specification
 import spock.lang.Shared
 
-import javax.inject.Inject
+import jakarta.inject.Inject
 
 @MicronautTest
 class LicenseControllerSpec extends Specification {
