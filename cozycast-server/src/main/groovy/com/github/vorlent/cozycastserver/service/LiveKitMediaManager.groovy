@@ -2,24 +2,72 @@ package com.github.vorlent.cozycastserver.service
 
 import com.github.vorlent.cozycastserver.*
 import jakarta.inject.Singleton
-// This includes AccessToken, RoomJoin, Room, etc.
-import io.livekit.server.* 
+import io.livekit.server.IngressServiceClient
+import io.livekit.server.AccessToken
+import io.livekit.server.RoomJoin
+import io.livekit.server.RoomName
+import io.livekit.server.VideoGrant
+// Add these imports for the specific grants
+import io.livekit.server.RoomCreate
+import io.livekit.server.IngressAdmin
+import livekit.LivekitIngress.CreateIngressRequest
+import livekit.LivekitIngress.IngressInput
+import livekit.LivekitIngress.IngressInfo
+import retrofit2.Response
+import groovy.util.logging.Slf4j
 
+@Slf4j
 @Singleton
 class LiveKitMediaManager implements MediaManager {
 
-    private final String apiKey = System.getenv('LIVEKIT_API_KEY')
-    private final String apiSecret = System.getenv('LIVEKIT_API_SECRET')
-    private final String livekitUrl = System.getenv('LIVEKIT_URL')
-    private final String ingressUrl = System.getenv('LIVEKIT_INGRESS_URL') ?: "http://localhost:8080"
+    private final String apiKey = System.getenv('LIVEKIT_API_KEY') ?: "devkey"
+    private final String apiSecret = System.getenv('LIVEKIT_API_SECRET') ?: "secret"
+    private final String livekitUrl = System.getenv('LIVEKIT_URL') ?: "http://localhost:7880"
+    
+    private final IngressServiceClient ingressClient = IngressServiceClient.createClient(livekitUrl, apiKey, apiSecret)
 
     @Override
     WorkerMediaInfo setupWorker(String roomName) {
-        return new WorkerMediaInfo(
-            // Point to the Ingress service port and the /w endpoint
-            whipUrl: "${ingressUrl}/w", 
-            streamKey: "key_${roomName}"
-        )
+        try {
+            // 1. Build the Ingress request
+            CreateIngressRequest request = CreateIngressRequest.newBuilder()
+                .setInputType(IngressInput.WHIP_INPUT)
+                .setName("Worker-${roomName}")
+                .setRoomName(roomName)
+                .setParticipantIdentity("worker-${roomName}")
+                .setBypassTranscoding(true) 
+                .build()
+
+            // 2. Generate an Administrative Token
+            AccessToken token = new AccessToken(apiKey, apiSecret)
+            token.setIdentity("server-admin")
+
+            // FIX: Instantiate specific grants directly instead of using Map coercion on the sealed VideoGrant class
+            token.addGrants(new IngressAdmin(true), new RoomCreate(true))
+            
+            String authHeader = "Bearer ${token.toJwt()}"
+
+            // 3. Execute the call via the Retrofit service
+            Response<IngressInfo> response = ingressClient.service.createIngress(request, authHeader).execute()
+            
+            if (!response.isSuccessful()) {
+                String error = response.errorBody()?.string()
+                log.error("LiveKit API error: {}", error)
+                throw new RuntimeException("Failed to create ingress: ${error}")
+            }
+
+            IngressInfo info = response.body()
+            log.info("Created Ingress for room {}: URL={}, Key={}", roomName, info.getUrl(), info.getStreamKey())
+
+            // Return the dynamic URL and Key provided by LiveKit
+            return new WorkerMediaInfo(
+                whipUrl: info.getUrl(), 
+                streamKey: info.getStreamKey()
+            )
+        } catch (Exception e) {
+            log.error("Failed to setup LiveKit Ingress", e)
+            throw e
+        }
     }
 
     @Override
@@ -27,63 +75,97 @@ class LiveKitMediaManager implements MediaManager {
         AccessToken token = new AccessToken(apiKey, apiSecret)
         token.setIdentity(identity)
         token.setName(nickname)
-    
-        // Use the specific grant setters on the token instance
-        // This internally manages the VideoGrant object for you
-        token.addGrants(new RoomJoin(true))
-        token.addGrants(new RoomName(roomName))
-    
+        token.addGrants(new RoomJoin(true), new RoomName(roomName))
         return token.toJwt()
     }
 
     @Override
     void processWorkerAnswer(WorkerSession worker, String roomName, String sdp) {
         try {
-            // Construct WHIP URL (e.g., http://ingress:8080/w/key_default)
-            String whipUrlWithKey = "${ingressUrl}/w/key_${roomName}"
-            URL url = new URL(whipUrlWithKey)
+            if (!worker.whipUrl) {
+                log.error("Worker session missing whipUrl for room {}", roomName)
+                return
+            }
+
+            URL url = new URL(worker.whipUrl)
+            log.info("Handshaking with WHIP URL: {}", url)
+
             HttpURLConnection connection = (HttpURLConnection) url.openConnection()
             connection.setRequestMethod("POST")
             connection.setRequestProperty("Content-Type", "application/sdp")
+            connection.setRequestProperty("Authorization", "Bearer ${worker.streamKey}")
             connection.setDoOutput(true)
 
-            // Send Worker's SDP Offer
             connection.outputStream.withWriter { it.write(sdp) }
 
             if (connection.responseCode in [200, 201]) {
-                String answerSdp = connection.inputStream.text
-                
-                // Parse the answer SDP for the Ingress IP and ports
+                // Read text ensuring full stream consumption
+                String answerSdp = connection.inputStream.newReader('UTF-8').text
+                log.info("WHIP Handshake Success. Response Code: {}", connection.responseCode)
+                log.info("WHIP Answer SDP Body:\n{}", answerSdp)
+        
                 String ip = url.host
                 int audioPort = -1
                 int videoPort = -1
-
-                // Extract IP from c=IN IP4 line
-                def ipMatcher = answerSdp =~ /c=IN IP4 ([^ \r\n]+)/
-                if (ipMatcher.find() && ipMatcher[0][1] != "0.0.0.0") ip = ipMatcher[0][1]
-
-                // Extract ports from m= lines
-                answerSdp.eachLine { line ->
-                    if (line.startsWith("m=audio ")) audioPort = line.split(" ")[1].toInteger()
-                    if (line.startsWith("m=video ")) videoPort = line.split(" ")[1].toInteger()
+        
+                // Regex for IP
+                def ipMatcher = answerSdp =~ /c=IN IP4\s+([^\s\r\n]+)/
+                if (ipMatcher.find() && ipMatcher[0][1] != "0.0.0.0") {
+                    ip = ipMatcher[0][1]
                 }
-
-                // Send the "SDP Offer" (actually the WHIP Answer) back to the worker
-                worker.websocket.sendSync([
-                    type: 'sdpOffer',
-                    ip: ip,
-                    audioPort: audioPort,
-                    videoPort: videoPort
-                ])
-            } else {
-                log.error("WHIP POST failed: ${connection.responseCode} ${connection.responseMessage}")
+        
+                // Regex for Ports (m=audio <port> and m=video <port>)
+                def audioMatcher = answerSdp =~ /m=audio\s+(\d+)/
+                if (audioMatcher.find()) audioPort = audioMatcher[0][1].toInteger()
+        
+                def videoMatcher = answerSdp =~ /m=video\s+(\d+)/
+                if (videoMatcher.find()) videoPort = videoMatcher[0][1].toInteger()
+                
+                // NEW: Parse ICE candidates for the real UDP port
+                def candidateMatcher = answerSdp =~ /a=candidate:\S+ \d+ udp \d+ [0-9.]+ (\d+) typ host/
+                if (candidateMatcher.find()) {
+                    int candidatePort = candidateMatcher[0][1].toInteger()
+                    // Use the candidate port if the m-line port is invalid (0 or 9)
+                    if (audioPort <= 9) audioPort = candidatePort
+                    if (videoPort <= 9) videoPort = candidatePort
+                }
+                
+                // Fallback to existing logic if no candidates found (for safety)
+                if (videoPort <= 0 && audioPort > 0) videoPort = audioPort
+                if (audioPort <= 0 && videoPort > 0) audioPort = videoPort
+        
+                log.info("Parsed Destination -> IP: {}, Audio: {}, Video: {}", ip, audioPort, videoPort)
+        
+                if (audioPort > 0 && videoPort > 0) {
+                    worker.websocket.sendSync([
+                        type: 'sdpOffer',
+                        ip: ip,
+                        audioPort: audioPort,
+                        videoPort: videoPort
+                    ])
+                } else {
+                    log.error("CRITICAL: LiveKit returned an SDP answer with no media ports. Check Ingress logs.")
+                }
+            }else {
+            // Read the error body from the errorStream
+            String errorDetail = ""
+            try {
+                errorDetail = connection.errorStream?.text ?: "No error body"
+            } catch (Exception streamEx) {
+                errorDetail = "Could not read error stream: ${streamEx.message}"
             }
+        
+            log.error("WHIP POST failed! Status: {} {}. Details: {} for room {}", 
+                      connection.responseCode, 
+                      connection.responseMessage, 
+                      errorDetail, 
+                      roomName)
+        }
         } catch (Exception e) {
-            log.error("Error in WHIP handshake", e)
+            log.error("Error in processWorkerAnswer for room {}", roomName, e)
         }
     }
 
     @Override
     void releaseWorker(String roomName) { }
-
 }

@@ -46,7 +46,7 @@ class WorkerWebsocketServer {
     private String accessKey = System.getenv('COZYCAST_WORKER_KEY')
 
     WorkerWebsocketServer(MediaManager mediaManager,
-        RoomRegistry roomRegistry) {
+      RoomRegistry roomRegistry) {
         this.mediaManager = mediaManager
         this.roomRegistry = roomRegistry
         log.info "test $accessKey"
@@ -65,14 +65,18 @@ class WorkerWebsocketServer {
         // Get WHIP info from LiveKit
         WorkerMediaInfo info = mediaManager.setupWorker(room)
 
+        // FIX: Store the WHIP info in the worker session so it's available in onMessage
+        worker.whipUrl = info.whipUrl
+        worker.streamKey = info.streamKey
+
         def roomObj = roomRegistry.getRoom(room)
         session.sendSync(new UpdateWorkerSettingsEvent(settings: roomObj.videoSettings, restart: false))
 
         // Send WHIP details to the worker
         session.sendSync(new WHIPOffer(
-        url: info.whipUrl,
-        key: info.streamKey
-    ))
+            url: info.whipUrl,
+            key: info.streamKey
+        ))
         roomObj.startStream(worker)
     }
 

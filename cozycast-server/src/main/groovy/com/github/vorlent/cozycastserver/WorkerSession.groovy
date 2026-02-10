@@ -7,6 +7,9 @@ class WorkerSession {
     MediaConnection mediaConnection
     WebSocketSession websocket
 
+    String whipUrl
+    String streamKey
+
     void close() {
         mediaConnection?.release()
     }

@@ -131,6 +131,42 @@ local video_settings = {
     audio_bitrate = "192k"
 }
 
+function send_sdp_answer(ws)
+    print("worker.lua: Sending formatted WebRTC SDP offer to server")
+    
+    -- Generate a unique session ID
+    local session_id = tostring(math.random(100000000, 999999999))
+    
+    local sdp = "v=0\r\n" ..
+                "o=- " .. session_id .. " 2 IN IP4 127.0.0.1\r\n" ..
+                "s=Cozycast\r\n" ..
+                "t=0 0\r\n" ..
+                "a=msid-semantic:WMS\r\n" ..
+                "a=group:BUNDLE 0 1\r\n" ..
+                "a=ice-ufrag:cozycast\r\n" ..
+                "a=ice-pwd:cozycast-password\r\n" ..
+                -- Use a non-zero dummy fingerprint that follows a valid format
+                "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\n" ..
+                "a=setup:actpass\r\n" ..
+                "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" ..
+                "c=IN IP4 127.0.0.1\r\n" ..
+                "a=mid:0\r\n" .. 
+                "a=rtpmap:111 opus/48000/2\r\n" ..
+                "a=sendonly\r\n" ..
+                "a=rtcp-mux\r\n" ..
+                "m=video 9 UDP/TLS/RTP/SAVPF 96\r\n" ..
+                "c=IN IP4 127.0.0.1\r\n" ..
+                "a=mid:1\r\n" .. 
+                "a=rtpmap:96 VP8/90000\r\n" ..
+                "a=sendonly\r\n" ..
+                "a=rtcp-mux\r\n"
+    
+    ws:send(lunajson.encode{
+        action = "sdpAnswer",
+        content = sdp
+    })
+end
+
 function capture(data, ws)
     wait_for_pulseaudio()
 
@@ -139,29 +175,22 @@ function capture(data, ws)
         and video_settings.scale_height ~= video_settings.desktop_height then
         scale = "-vf scale="..video_settings.scale_width..":"..video_settings.scale_height
     end
+    -- We use the IP and ports provided by the server in the sdpOffer message
     local options = {
         "-thread_queue_size 512",
-        "-f alsa",
-        "-ac 2",
-        "-channel_layout stereo",
-        "-i pulse",
+        "-f alsa", "-ac 2", "-channel_layout stereo", "-i pulse",
         "-s "..video_settings.desktop_width.."x"..video_settings.desktop_height,
         "-framerate "..video_settings.frame_rate,
-        "-f x11grab",
-        "-i $DISPLAY.0+0,0",
-        "-c:v libvpx",
-        "-quality realtime",
-        scale,
-        "-crf 10",
+        "-f x11grab", "-i $DISPLAY.0+0,0",
+        "-c:v libvpx", "-quality realtime", scale, "-crf 10",
         "-b:v "..video_settings.video_bitrate,
         "-pix_fmt yuv420p",
-        "-sdp_file /home/cozycast/sdp_answer",
-        "-an -f rtp rtp://"..data.ip..":"..data.audioPort,
-        "-c:a libopus",
-        "-af aresample=async=1000:first_pts=0",
+        -- CORRECT: First output is Video (due to -an), send to Video Port
+        "-an -f rtp rtp://"..data.ip..":"..data.videoPort,
+        "-c:a libopus", "-af aresample=async=1000:first_pts=0",
         "-b:a "..video_settings.audio_bitrate,
-        "-vn -sdp_file /home/cozycast/sdp_answer",
-        "-f rtp rtp://"..data.ip..":"..data.videoPort
+        -- CORRECT: Second output is Audio (due to -vn), send to Audio Port
+        "-vn -f rtp rtp://"..data.ip..":"..data.audioPort
     }
 
     local options_string = ""
@@ -173,29 +202,13 @@ function capture(data, ws)
         print ("worker.lua: /capture.sh "..options_string)
     end
 
-    print("worker.lua: start capture")
+    local options_string = ""
+    for i = 1, #options do
+      options_string = options_string.." "..options[i]
+    end
+
+    print("worker.lua: starting capture to " .. data.ip .. " (Video:" .. data.videoPort .. ", Audio:" .. data.audioPort .. ")")
     os.execute ("/capture.sh "..options_string)
-    repeat
-        local file, error = io.open("/home/cozycast/sdp_answer", "rb")
-        if file then
-            local content = file:read "*a"
-            if debugCozy then
-                print ("worker.lua: "..content);
-                print("worker.lua: "..lunajson.encode{
-                    action = "sdpAnswer",
-                    content = content
-                })
-            end
-            ws:send(lunajson.encode{
-                action = "sdpAnswer",
-                content = content
-            })
-            file:close()
-        else
-            print(error)
-            os.execute("sleep 1")
-        end
-    until file
 end
 
 local last_keepalive = 0
@@ -316,8 +329,18 @@ function onmessage(ws, data)
         -- skip keepalive response
         return true
     end
+    -- 1. Handle WHIP offer from server
+    if data.type == "whipOffer" then
+        print("worker.lua: Received whipOffer")
+        if not active_vm_flag then 
+            start_vm()
+            active_vm_flag = true
+        end
+        send_sdp_answer(ws)
+        return true
+    end
     if data.type == "sdpOffer" then
-        print("worker.lua: sdpOffer")
+        print("worker.lua: Received sdpOffer with destination ports")
         if not active_vm_flag then 
             start_vm()
             active_vm_flag = true
@@ -465,12 +488,15 @@ function start_server()
 end
 
 while true do
-    print(pcall(start_server))
-    if active_vm_flag then 
-        os.execute("echo '' >> /worker.restart")
-        break
+    -- Run the server and catch any errors
+    local status, err = pcall(start_server)
+    if not status then
+        print("worker.lua: Runtime error: " .. tostring(err))
     end
-    print("worker.lua: Restarting lua worker in 5 seconds")
+    
+    -- Stay alive! Do NOT write to /worker.restart here.
+    -- Just wait 5 seconds and try to reconnect to the websocket.
+    print("worker.lua: Connection lost or timed out. Reconnecting in 5 seconds...")
     os.execute("sleep 5")
 end
 libxdo.xdo_free(xdo)
