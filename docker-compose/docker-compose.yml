@@ -27,6 +27,7 @@ services:
         environment:
             LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
             LIVEKIT_INGRESS_WHIP_BASE_URL: "http://${PUBLIC_IP}:8080/whip"
+            LIVEKIT_INGRESS_RTMP_BASE_URL: "rtmp://${PUBLIC_IP}:1935/live"
         volumes:
             - "./livekit.yaml:/livekit.yaml"
         restart: unless-stopped
@@ -43,6 +44,7 @@ services:
                 redis:
                     address: localhost:6379
                 whip_port: 8080
+                rtmp_port: 1935
                 logging:
                     level: info
         # We keep these for standard compatibility 

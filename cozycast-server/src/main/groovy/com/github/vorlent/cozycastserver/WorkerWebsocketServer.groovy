@@ -16,9 +16,9 @@ import groovy.util.logging.Slf4j
 // Add a new event class
 class WHIPOffer {
 
-    String type = 'whipOffer'
-    String url
-    String key
+    public String type = 'whipOffer'
+    public String url
+    public String key
 
 }
 

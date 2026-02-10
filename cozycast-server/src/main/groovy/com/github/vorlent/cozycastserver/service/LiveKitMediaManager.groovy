@@ -31,11 +31,11 @@ class LiveKitMediaManager implements MediaManager {
         try {
             // 1. Build the Ingress request
             CreateIngressRequest request = CreateIngressRequest.newBuilder()
-                .setInputType(IngressInput.WHIP_INPUT)
+                .setInputType(IngressInput.RTMP_INPUT)
                 .setName("Worker-${roomName}")
                 .setRoomName(roomName)
                 .setParticipantIdentity("worker-${roomName}")
-                .setBypassTranscoding(true) 
+                .setEnableTranscoding(true)
                 .build()
 
             // 2. Generate an Administrative Token
@@ -129,7 +129,7 @@ class LiveKitMediaManager implements MediaManager {
                     if (audioPort <= 9) audioPort = candidatePort
                     if (videoPort <= 9) videoPort = candidatePort
                 }
-                
+
                 // Fallback to existing logic if no candidates found (for safety)
                 if (videoPort <= 0 && audioPort > 0) videoPort = audioPort
                 if (audioPort <= 0 && videoPort > 0) audioPort = videoPort

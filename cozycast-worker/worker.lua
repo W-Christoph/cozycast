@@ -167,30 +167,51 @@ function send_sdp_answer(ws)
     })
 end
 
-function capture(data, ws)
+function capture(rtmpUrl, ws)
     wait_for_pulseaudio()
 
-    local scale = ""
-    if video_settings.scale_width ~= video_settings.desktop_width
-        and video_settings.scale_height ~= video_settings.desktop_height then
-        scale = "-vf scale="..video_settings.scale_width..":"..video_settings.scale_height
-    end
-    -- We use the IP and ports provided by the server in the sdpOffer message
+    -- 1. Get current VM dimensions
+    local in_w = video_settings.desktop_width
+    local in_h = video_settings.desktop_height
+
+    -- 2. Calculate target dimensions (Must be Even for libx264)
+    local out_w = video_settings.scale_width
+    local out_h = video_settings.scale_height
+    
+    -- If no scaling was requested, use desktop dims
+    if out_w == in_w then out_w = in_w end
+    if out_h == in_h then out_h = in_h end
+
+    -- Sanitize: Ensure dimensions are even numbers
+    if out_w % 2 ~= 0 then out_w = out_w - 1 end
+    if out_h % 2 ~= 0 then out_h = out_h - 1 end
+
+    -- 3. Construct FFmpeg Command
+    -- Note: We capture at VM size (-s in_w x in_h) but output at even size (-vf scale)
     local options = {
         "-thread_queue_size 512",
         "-f alsa", "-ac 2", "-channel_layout stereo", "-i pulse",
-        "-s "..video_settings.desktop_width.."x"..video_settings.desktop_height,
+        "-f x11grab", 
+        "-s "..in_w.."x"..in_h, 
         "-framerate "..video_settings.frame_rate,
-        "-f x11grab", "-i $DISPLAY.0+0,0",
-        "-c:v libvpx", "-quality realtime", scale, "-crf 10",
-        "-b:v "..video_settings.video_bitrate,
+        "-i $DISPLAY.0+0,0",
+        
+        -- VIDEO: libx264 with even scaling
+        "-c:v libx264", 
+        "-preset ultrafast", 
+        "-tune zerolatency", 
         "-pix_fmt yuv420p",
-        -- CORRECT: First output is Video (due to -an), send to Video Port
-        "-an -f rtp rtp://"..data.ip..":"..data.videoPort,
-        "-c:a libopus", "-af aresample=async=1000:first_pts=0",
+        "-g "..(video_settings.frame_rate * 2),
+        "-b:v "..video_settings.video_bitrate,
+        "-vf scale="..out_w..":"..out_h, -- Applies the even resolution
+        
+        -- AUDIO: AAC
+        "-c:a aac", 
         "-b:a "..video_settings.audio_bitrate,
-        -- CORRECT: Second output is Audio (due to -vn), send to Audio Port
-        "-vn -f rtp rtp://"..data.ip..":"..data.audioPort
+        "-ar 44100",
+        
+        -- OUTPUT: RTMP (flv)
+        "-f flv \""..rtmpUrl.."\""
     }
 
     local options_string = ""
@@ -202,12 +223,7 @@ function capture(data, ws)
         print ("worker.lua: /capture.sh "..options_string)
     end
 
-    local options_string = ""
-    for i = 1, #options do
-      options_string = options_string.." "..options[i]
-    end
-
-    print("worker.lua: starting capture to " .. data.ip .. " (Video:" .. data.videoPort .. ", Audio:" .. data.audioPort .. ")")
+    print("worker.lua: starting capture to RTMP Target ("..out_w.."x"..out_h..")")
     os.execute ("/capture.sh "..options_string)
 end
 
@@ -331,12 +347,19 @@ function onmessage(ws, data)
     end
     -- 1. Handle WHIP offer from server
     if data.type == "whipOffer" then
-        print("worker.lua: Received whipOffer")
+        print("worker.lua: Received Ingress Offer (RTMP)")
         if not active_vm_flag then 
             start_vm()
             active_vm_flag = true
         end
-        send_sdp_answer(ws)
+
+        print(data)
+        
+        -- Construct the full RTMP URL: rtmp://ip:port/app/streamKey
+        local rtmpUrl = data.url .. "/" .. data.key
+        
+        -- Start capturing directly (No SDP handshake needed for RTMP)
+        capture(rtmpUrl, ws)
         return true
     end
     if data.type == "sdpOffer" then
