@@ -131,100 +131,88 @@ local video_settings = {
     audio_bitrate = "192k"
 }
 
-function send_sdp_answer(ws)
-    print("worker.lua: Sending formatted WebRTC SDP offer to server")
+-- Add this helper function to debug PulseAudio state
+function dump_pulse_info()
+    print("--- PULSEAUDIO DIAGNOSTICS ---")
+    local cmd_prefix = "sudo -u cozycast pactl --server unix:/tmp/pulse-socket "
     
-    -- Generate a unique session ID
-    local session_id = tostring(math.random(100000000, 999999999))
+    print("[1] Server Info:")
+    os.execute(cmd_prefix .. "info")
     
-    local sdp = "v=0\r\n" ..
-                "o=- " .. session_id .. " 2 IN IP4 127.0.0.1\r\n" ..
-                "s=Cozycast\r\n" ..
-                "t=0 0\r\n" ..
-                "a=msid-semantic:WMS\r\n" ..
-                "a=group:BUNDLE 0 1\r\n" ..
-                "a=ice-ufrag:cozycast\r\n" ..
-                "a=ice-pwd:cozycast-password\r\n" ..
-                -- Use a non-zero dummy fingerprint that follows a valid format
-                "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\n" ..
-                "a=setup:actpass\r\n" ..
-                "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" ..
-                "c=IN IP4 127.0.0.1\r\n" ..
-                "a=mid:0\r\n" .. 
-                "a=rtpmap:111 opus/48000/2\r\n" ..
-                "a=sendonly\r\n" ..
-                "a=rtcp-mux\r\n" ..
-                "m=video 9 UDP/TLS/RTP/SAVPF 96\r\n" ..
-                "c=IN IP4 127.0.0.1\r\n" ..
-                "a=mid:1\r\n" .. 
-                "a=rtpmap:96 VP8/90000\r\n" ..
-                "a=sendonly\r\n" ..
-                "a=rtcp-mux\r\n"
+    print("[2] Sinks (Outputs):")
+    os.execute(cmd_prefix .. "list sinks short")
     
-    ws:send(lunajson.encode{
-        action = "sdpAnswer",
-        content = sdp
-    })
+    print("[3] Sources (Inputs):")
+    os.execute(cmd_prefix .. "list sources short")
+    
+    print("[4] Default Sink:")
+    os.execute(cmd_prefix .. "get-default-sink")
+    
+    print("[5] Default Source:")
+    os.execute(cmd_prefix .. "get-default-source")
+    print("------------------------------")
 end
 
-function capture(rtmpUrl, ws)
+function capture(whipUrl, streamKey, ws)
     wait_for_pulseaudio()
 
-    -- 1. Get current VM dimensions
-    local in_w = video_settings.desktop_width
-    local in_h = video_settings.desktop_height
-
-    -- 2. Calculate target dimensions (Must be Even for libx264)
-    local out_w = video_settings.scale_width
-    local out_h = video_settings.scale_height
+    -- Helper to parse "1M" -> 1000 or "500k" -> 500
+    local function parse_bitrate_kbps(str)
+        local num = tonumber(str:match("[%d%.]+"))
+        if str:find("M") then return math.floor(num * 1000) end
+        if str:find("k") then return math.floor(num) end
+        return math.floor(num)
+    end
     
-    -- If no scaling was requested, use desktop dims
-    if out_w == in_w then out_w = in_w end
-    if out_h == in_h then out_h = in_h end
+    local function parse_bitrate_bps(str)
+         -- Opusenc expects bits per second usually, but we can pass standard int
+         -- 192k -> 192000
+         local num = tonumber(str:match("[%d%.]+"))
+         if str:find("M") then return math.floor(num * 1000000) end
+         if str:find("k") then return math.floor(num * 1000) end
+         return math.floor(num)
+    end
 
-    -- Sanitize: Ensure dimensions are even numbers
-    if out_w % 2 ~= 0 then out_w = out_w - 1 end
-    if out_h % 2 ~= 0 then out_h = out_h - 1 end
+    local video_bitrate_kbps = parse_bitrate_kbps(video_settings.video_bitrate)
+    local audio_bitrate_bps = parse_bitrate_bps(video_settings.audio_bitrate)
 
-    -- 3. Construct FFmpeg Command
-    -- Note: We capture at VM size (-s in_w x in_h) but output at even size (-vf scale)
-    local options = {
-        "-thread_queue_size 512",
-        "-f alsa", "-ac 2", "-channel_layout stereo", "-i pulse",
-        "-f x11grab", 
-        "-s "..in_w.."x"..in_h, 
-        "-framerate "..video_settings.frame_rate,
-        "-i $DISPLAY.0+0,0",
+    print("worker.lua: Dumping PulseAudio state before capture...")
+    dump_pulse_info()
+
+    local width = video_settings.scale_width
+    local height = video_settings.scale_height
+    local fps = video_settings.frame_rate
+
+    -- GStreamer Pipeline Construction
+    -- Video: ximagesrc -> convert -> x264enc -> whipsink
+    -- Audio: pulsesrc -> convert -> opusenc -> whipsink
+    
+    local pipeline_parts = {
+        "whipclientsink name=ws signaller::whip-endpoint=\"" .. whipUrl .. "\" signaller::auth-token=\"" .. streamKey .. "\"",
         
-        -- VIDEO: libx264 with even scaling
-        "-c:v libx264", 
-        "-preset ultrafast", 
-        "-tune zerolatency", 
-        "-pix_fmt yuv420p",
-        "-g "..(video_settings.frame_rate * 2),
-        "-b:v "..video_settings.video_bitrate,
-        "-vf scale="..out_w..":"..out_h, -- Applies the even resolution
-        
-        -- AUDIO: AAC
-        "-c:a aac", 
-        "-b:a "..video_settings.audio_bitrate,
-        "-ar 44100",
-        
-        -- OUTPUT: RTMP (flv)
-        "-f flv \""..rtmpUrl.."\""
+        -- Video Branch with a queue
+        "ximagesrc display-name=:0 use-damage=0",
+        "! queue ! video/x-raw,framerate=" .. fps .. "/1",
+        "! videoscale ! video/x-raw,width=" .. width .. ",height=" .. height,
+        "! videoconvert",
+        "! x264enc tune=zerolatency speed-preset=ultrafast bitrate=" .. video_bitrate_kbps .. " key-int-max=" .. (fps * 2),
+        "! ws.video_0",
+
+        -- Audio Branch with a queue
+        "pulsesrc device=CozySink.monitor server=unix:/tmp/pulse-socket",
+        "! queue ! audioconvert",
+        "! opusenc bitrate=" .. audio_bitrate_bps,
+        "! ws.audio_0"
     }
 
-    local options_string = ""
-    for i = 1, #options do
-      options_string = options_string.." "..options[i]
-    end
+    local options_string = table.concat(pipeline_parts, " ")
 
     if debugCozy then
-        print ("worker.lua: /capture.sh "..options_string)
+        print ("worker.lua: /capture.sh " .. options_string)
     end
 
-    print("worker.lua: starting capture to RTMP Target ("..out_w.."x"..out_h..")")
-    os.execute ("/capture.sh "..options_string)
+    print("worker.lua: starting capture to WHIP Target")
+    os.execute ("/capture.sh " .. options_string)
 end
 
 local last_keepalive = 0
@@ -326,17 +314,34 @@ end
 local active_vm_flag = false
 
 function start_vm() 
-    print("worker.lua: starting vm width: "..video_settings.desktop_width,", height:"..video_settings.desktop_height)
+    print("worker.lua: starting vm and audio")
 
-    os.execute ("Xvfb $DISPLAY -screen 0 "..video_settings.desktop_width.."x"..video_settings.desktop_height.."x24 -nolisten tcp & echo $! >> /worker.pid")
-    os.execute ("sudo -u cozycast pulseaudio --kill")
-    os.execute ("sudo -u cozycast pulseaudio & echo $! >> /worker.pid")
+    -- Start Xvfb
+    os.execute ("Xvfb :0 -screen 0 "..video_settings.desktop_width.."x"..video_settings.desktop_height.."x24 -nolisten tcp & echo $! >> /worker.pid")
+    
+    -- Start PulseAudio with a fixed, anonymous socket
+    os.execute ("sudo -u cozycast pulseaudio --kill 2>/dev/null")
+    os.execute ("sudo -u cozycast pulseaudio --daemonize=no --exit-idle-time=-1 --load='module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse-socket' & echo $! >> /worker.pid")
+    
+    -- Start Desktop
     os.execute ("sudo -u cozycast xfce4-session & echo $! >> /worker.pid")
+    
+    -- Give things time to initialize
     os.execute("sleep 5")
+    
+    -- [FIX STARTS HERE] Configure PulseAudio with a virtual sink
+    print("worker.lua: configuring virtual audio sink")
+    local pulse_cmd = "sudo -u cozycast pactl --server unix:/tmp/pulse-socket "
+    os.execute(pulse_cmd .. "load-module module-null-sink sink_name=CozySink")
+    os.execute(pulse_cmd .. "set-default-sink CozySink")
+    os.execute(pulse_cmd .. "set-default-source CozySink.monitor")
+    -- [FIX ENDS HERE]
+
+    -- Allow cozycast user to access the X display
+    os.execute("xhost +SI:localuser:cozycast")
 
     xdo = libxdo.xdo_new(nil)
-
-    print("worker.lua: Started VM")
+    print("worker.lua: VM Started Successfully")
 end
 
 local lastCallTimestamp = 0
@@ -347,30 +352,18 @@ function onmessage(ws, data)
     end
     -- 1. Handle WHIP offer from server
     if data.type == "whipOffer" then
-        print("worker.lua: Received Ingress Offer (RTMP)")
+        print("worker.lua: Received Ingress Offer (WHIP)")
         if not active_vm_flag then 
             start_vm()
             active_vm_flag = true
         end
-
         print(data)
         
-        -- Construct the full RTMP URL: rtmp://ip:port/app/streamKey
-        local rtmpUrl = data.url .. "/" .. data.key
-        
-        -- Start capturing directly (No SDP handshake needed for RTMP)
-        capture(rtmpUrl, ws)
+        -- Call capture with separated URL and Key
+        capture(data.url, data.key, ws)
         return true
     end
-    if data.type == "sdpOffer" then
-        print("worker.lua: Received sdpOffer with destination ports")
-        if not active_vm_flag then 
-            start_vm()
-            active_vm_flag = true
-        end
-        capture(data, ws)
-        return true
-    end
+    
     local currentTime = os.time()
     if currentTime - lastCallTimestamp >= 1 then
         lastCallTimestamp = currentTime

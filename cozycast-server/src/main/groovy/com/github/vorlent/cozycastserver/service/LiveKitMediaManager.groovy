@@ -31,7 +31,7 @@ class LiveKitMediaManager implements MediaManager {
         try {
             // 1. Build the Ingress request
             CreateIngressRequest request = CreateIngressRequest.newBuilder()
-                .setInputType(IngressInput.RTMP_INPUT)
+                .setInputType(IngressInput.WHIP_INPUT) // CHANGED TO WHIP
                 .setName("Worker-${roomName}")
                 .setRoomName(roomName)
                 .setParticipantIdentity("worker-${roomName}")
@@ -57,6 +57,7 @@ class LiveKitMediaManager implements MediaManager {
             }
 
             IngressInfo info = response.body()
+            
             log.info("Created Ingress for room {}: URL={}, Key={}", roomName, info.getUrl(), info.getStreamKey())
 
             // Return the dynamic URL and Key provided by LiveKit
