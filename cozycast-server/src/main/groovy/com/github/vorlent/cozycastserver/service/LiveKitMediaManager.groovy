@@ -35,7 +35,7 @@ class LiveKitMediaManager implements MediaManager {
                 .setName("Worker-${roomName}")
                 .setRoomName(roomName)
                 .setParticipantIdentity("worker-${roomName}")
-                .setEnableTranscoding(true)
+                .setEnableTranscoding(false)
                 .build()
 
             // 2. Generate an Administrative Token

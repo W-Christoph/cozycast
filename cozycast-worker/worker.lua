@@ -155,6 +155,12 @@ end
 
 function capture(whipUrl, streamKey, ws)
     wait_for_pulseaudio()
+    
+    video_settings.video_bitrate = "4M"
+    print("woker video settings.")
+    for key, value in pairs(video_settings) do
+        print(key .. ": " .. tostring(value))
+    end
 
     -- Helper to parse "1M" -> 1000 or "500k" -> 500
     local function parse_bitrate_kbps(str)
@@ -183,6 +189,9 @@ function capture(whipUrl, streamKey, ws)
     local height = video_settings.scale_height
     local fps = video_settings.frame_rate
 
+    -- ultrafast, veryfast, medium, 
+    local speed_preset = "veryfast"
+
     -- GStreamer Pipeline Construction
     -- Video: ximagesrc -> convert -> x264enc -> whipsink
     -- Audio: pulsesrc -> convert -> opusenc -> whipsink
@@ -195,7 +204,8 @@ function capture(whipUrl, streamKey, ws)
         "! queue ! video/x-raw,framerate=" .. fps .. "/1",
         "! videoscale ! video/x-raw,width=" .. width .. ",height=" .. height,
         "! videoconvert",
-        "! x264enc tune=zerolatency speed-preset=ultrafast bitrate=" .. video_bitrate_kbps .. " key-int-max=" .. (fps * 2),
+        "! x264enc tune=zerolatency speed-preset=".. speed_preset .. " bitrate=" .. video_bitrate_kbps .. " key-int-max=" .. (fps * 2),
+        --"! vp8enc target-bitrate=" .. (video_bitrate_kbps * 1000) .. " deadline=0 cpu-used=4 keyframe-max-dist=" .. (fps * 2),
         "! ws.video_0",
 
         -- Audio Branch with a queue
