@@ -33,20 +33,30 @@ export const VideoControls = () => {
             return { x: 0, y: 0 }
         }
 
+        // 1. Get the actual resolution from the playing video element
+        const remoteWidth = videoElementRef.current.videoWidth;
+        const remoteHeight = videoElementRef.current.videoHeight;
+
         var videoRect = videoElementRef.current.getBoundingClientRect();
-        var ratioDistortion = (videoRect.width / videoRect.height) / (videoElementRef.current.videoWidth / videoElementRef.current.videoHeight);
+        
+        // 2. Use remoteWidth/Height for distortion calculation
+        var ratioDistortion = (videoRect.width / videoRect.height) / (remoteWidth / remoteHeight);
         var wider = (ratioDistortion > 1);
-        // assume centered
+        
         var padVt = wider ? 0 : (videoRect.height * (1 - ratioDistortion) / 2);
         var padHz = wider ? (videoRect.width * (1 - 1 / ratioDistortion)) / 2 : 0;
-        var correctedRect = { // video rectangle with corrections for black lines
+        
+        var correctedRect = { 
             top: videoRect.top + padVt,
             right: videoRect.right - padHz,
             bottom: videoRect.bottom - padVt,
             left: videoRect.left + padHz
         };
-        var x = (e.clientX - correctedRect.left) / (correctedRect.right - correctedRect.left) * viewPort.value.width;
-        var y = (e.clientY - correctedRect.top) / (correctedRect.bottom - correctedRect.top) * viewPort.value.height;
+
+        // 3. Use remoteWidth/Height for the final coordinate scaling
+        var x = (e.clientX - correctedRect.left) / (correctedRect.right - correctedRect.left) * remoteWidth;
+        var y = (e.clientY - correctedRect.top) / (correctedRect.bottom - correctedRect.top) * remoteHeight;
+        
         lastRemotePosition.current = { x: x, y: y };
         return { x: x, y: y }
     }

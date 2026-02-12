@@ -65,7 +65,6 @@ class WorkerWebsocketServer {
         // Get WHIP info from LiveKit
         WorkerMediaInfo info = mediaManager.setupWorker(room)
 
-        // FIX: Store the WHIP info in the worker session so it's available in onMessage
         worker.whipUrl = info.whipUrl
         worker.streamKey = info.streamKey
 
@@ -95,10 +94,6 @@ class WorkerWebsocketServer {
 
     @OnMessage
     void onMessage(String room, Map answer, WebSocketSession session) {
-        if (answer.action == 'sdpAnswer') {
-            // Pass the room name to the handler
-            mediaManager.processWorkerAnswer(roomRegistry.getRoom(room).worker, room, (String)answer.content)
-        }
         if (answer.action == 'keepalive') {
             session.sendSync([
                 action: 'keepalive'

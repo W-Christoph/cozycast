@@ -156,7 +156,6 @@ end
 function capture(whipUrl, streamKey, ws)
     wait_for_pulseaudio()
     
-    video_settings.video_bitrate = "4M"
     print("woker video settings.")
     for key, value in pairs(video_settings) do
         print(key .. ": " .. tostring(value))
@@ -339,13 +338,12 @@ function start_vm()
     -- Give things time to initialize
     os.execute("sleep 5")
     
-    -- [FIX STARTS HERE] Configure PulseAudio with a virtual sink
+    -- Configure PulseAudio with a virtual sink
     print("worker.lua: configuring virtual audio sink")
     local pulse_cmd = "sudo -u cozycast pactl --server unix:/tmp/pulse-socket "
     os.execute(pulse_cmd .. "load-module module-null-sink sink_name=CozySink")
     os.execute(pulse_cmd .. "set-default-sink CozySink")
     os.execute(pulse_cmd .. "set-default-source CozySink.monitor")
-    -- [FIX ENDS HERE]
 
     -- Allow cozycast user to access the X display
     os.execute("xhost +SI:localuser:cozycast")
@@ -520,7 +518,6 @@ while true do
         print("worker.lua: Runtime error: " .. tostring(err))
     end
     
-    -- Stay alive! Do NOT write to /worker.restart here.
     -- Just wait 5 seconds and try to reconnect to the websocket.
     print("worker.lua: Connection lost or timed out. Reconnecting in 5 seconds...")
     os.execute("sleep 5")

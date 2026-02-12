@@ -492,20 +492,26 @@ const rapidPing = (times) => {
     }
 }
 
-// VIDEOSTREAM (LiveKit Implementation)
-const livekit_connect = async (roomRef, token, videoElementId, audioOnly) => {
+// VIDEOSTREAM
+const livekit_connect = async (roomRef, token, videoElementId, audioOnly, audioOnlyStream) => {
     if (roomRef.current) {
         await roomRef.current.disconnect();
     }
 
     const room = new Room({
-        adaptiveStream: true,
-        dynacast: true,
+        adaptiveStream: false,
+        dynacast: false
     });
 
     roomRef.current = room;
 
-    room.on(RoomEvent.TrackSubscribed, (track) => {
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        audioOnlyStream.value = audioOnly
+        if (audioOnly && track.kind === 'video') {
+            publication.setSubscribed(false);
+            return;
+        }
+
         if (track.kind === 'video' || track.kind === 'audio') {
             track.attach(document.getElementById(videoElementId));
         }
@@ -623,7 +629,8 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                             livekitRoomRef,
                             parsedMessage.token,
                             'video',
-                            userSettings.value.audioOnly
+                            userSettings.value.audioOnly,
+                            state.audioOnly
                         );
                         break;
                     //Account events
@@ -634,6 +641,12 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                                 action: 'keepalive',
                             });
                         }, 30000);
+                        if (!state.videoPaused.value) {
+                            console.log("Starting video/audio stream");
+                            startVideo();
+                        } else {
+                            console.log("Reconnected, but keeping video paused as per user state.");
+                        }
                         break
                     case 'updatePermission':
                         updatePermission(parsedMessage, state.authorization, state.personalPermissions);
@@ -650,19 +663,6 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                         break;
 
                     //Videostream events
-                    case 'startResponse':
-                        startResponse(parsedMessage, webRtcPeerRef, state.viewPort, state.roomSettings);
-                        break;
-                    case 'iceCandidate':
-                        webRtcPeerRef.current.addIceCandidate(parsedMessage.candidate, function (error) {
-                            if (error) {
-                                console.error('Error iceCandidate: ' + error);
-                                return;
-                            } else {
-                                console.debug("Successful iceCandidate")
-                            }
-                        });
-                        break;
                     case 'stop_stream':
                         stopVideo();
                         break;

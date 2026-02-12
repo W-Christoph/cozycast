@@ -836,6 +836,10 @@ class WebsocketRoomService {
             }
             if (jsonMessage.videoBitrate) {
                 def bitrates = [
+                    '6M': '6M',
+                    '5M': '5M',
+                    '4M': '4M',
+                    '3M': '3M',
                     '2M': '2M',
                     '1M': '1M',
                     '500k': '500k',
@@ -1033,14 +1037,6 @@ class WebsocketRoomService {
         room.removeUser(sessionId)
     }
 
-    private void onIceCandidate(Room room, String sessionId, Map jsonMessage, String username) {
-        UserSession user = room.users.get(username)
-
-        if (user != null) {
-            mediaManager.addPlayerIceCandidate(user, sessionId, jsonMessage.candidate) // Decoupled
-        }
-    }
-
     private void sendPlayEnd(Room room, WebSocketSession session) {
         if (room.users.containsKey(session.getId())) {
             sendMessage(session, new PlayEndEvent())
@@ -1174,9 +1170,6 @@ class WebsocketRoomService {
                         break
                     case 'ban':
                         ban(currentRoom, session, jsonMessage, username)
-                        break
-                    case 'onIceCandidate':
-                        onIceCandidate(currentRoom, sessionId, jsonMessage, username)
                         break
                     default:
                         sendError(session, 'Invalid message with action ' + jsonMessage.action)
