@@ -14,5 +14,4 @@ services:
       FORCE_HTTPS: $FORCE_HTTPS
     volumes:
       - "../data/cozycast-worker/cozycast:/home/cozycast"
-      - ../libgstrswebrtc.so:/usr/lib/x86_64-linux-gnu/gstreamer-1.0/libgstrswebrtc.so
     restart: unless-stopped
