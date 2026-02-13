@@ -474,7 +474,7 @@ function start_server()
     end
     print("worker.lua: Connecting to "..url.. " Room: "..room)
     local ws = websocket.new_from_uri(url..room_key)
-    ws:connect()
+    ws:connect(2)
 
     io.stdout:flush()
 
