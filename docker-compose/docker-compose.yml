@@ -51,9 +51,6 @@ services:
             - redis
             - livekit-server
         restart: unless-stopped
-        depends_on:
-            - redis
-        restart: unless-stopped
     cozycast-worker:
         networks:
             - internal
