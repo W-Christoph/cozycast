@@ -47,6 +47,13 @@ function setup_env {
         echo $COZYCAST_WORKER_KEY > data/COZYCAST_WORKER_KEY
     fi
 
+    if [ ! -f "data/LIVEKIT_API_KEY" ]; then
+        echo "devkey_$(cat /dev/urandom | tr -dc 'a-z0-9' | head -c 8)" > data/LIVEKIT_API_KEY
+        cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 64 | head -n 1 > data/LIVEKIT_API_SECRET
+    fi
+    export LIVEKIT_API_KEY=$(cat data/LIVEKIT_API_KEY)
+    export LIVEKIT_API_SECRET=$(cat data/LIVEKIT_API_SECRET)
+
     export COMPOSE_COMPATIBILITY=true
 }
 setup_env
@@ -121,7 +128,7 @@ case $1 in
         ;;
     build)
         cd docker-compose
-        sudo -E docker-compose -p cozycast -f docker-compose.worker.yml -f docker-compose.yml build --progress plain
+        sudo -E docker-compose -p cozycast -f docker-compose.worker.yml -f docker-compose.yml build
         exit;
         ;;
     dev)
@@ -129,7 +136,7 @@ case $1 in
         cd docker-compose
         export SOURCE_URL=$(git remote get-url origin)
         sudo -E docker-compose -p cozycast -f docker-compose.worker.yml -f docker-compose.yml -f docker-compose.dev.yml up -d
-        coturn_add_kurento_user
+        #coturn_add_kurento_user
         liquibase_update
         (sudo -E docker exec -i cozycast-server sh dev.sh) &
         exit;

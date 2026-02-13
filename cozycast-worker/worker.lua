@@ -131,71 +131,98 @@ local video_settings = {
     audio_bitrate = "192k"
 }
 
-function capture(data, ws)
-    wait_for_pulseaudio()
+-- Add this helper function to debug PulseAudio state
+function dump_pulse_info()
+    print("--- PULSEAUDIO DIAGNOSTICS ---")
+    local cmd_prefix = "sudo -u cozycast pactl --server unix:/tmp/pulse-socket "
+    
+    print("[1] Server Info:")
+    os.execute(cmd_prefix .. "info")
+    
+    print("[2] Sinks (Outputs):")
+    os.execute(cmd_prefix .. "list sinks short")
+    
+    print("[3] Sources (Inputs):")
+    os.execute(cmd_prefix .. "list sources short")
+    
+    print("[4] Default Sink:")
+    os.execute(cmd_prefix .. "get-default-sink")
+    
+    print("[5] Default Source:")
+    os.execute(cmd_prefix .. "get-default-source")
+    print("------------------------------")
+end
 
-    local scale = ""
-    if video_settings.scale_width ~= video_settings.desktop_width
-        and video_settings.scale_height ~= video_settings.desktop_height then
-        scale = "-vf scale="..video_settings.scale_width..":"..video_settings.scale_height
+function capture(whipUrl, streamKey, ws)
+    wait_for_pulseaudio()
+    
+    print("woker video settings.")
+    for key, value in pairs(video_settings) do
+        print(key .. ": " .. tostring(value))
     end
-    local options = {
-        "-thread_queue_size 512",
-        "-f alsa",
-        "-ac 2",
-        "-channel_layout stereo",
-        "-i pulse",
-        "-s "..video_settings.desktop_width.."x"..video_settings.desktop_height,
-        "-framerate "..video_settings.frame_rate,
-        "-f x11grab",
-        "-i $DISPLAY.0+0,0",
-        "-c:v libvpx",
-        "-quality realtime",
-        scale,
-        "-crf 10",
-        "-b:v "..video_settings.video_bitrate,
-        "-pix_fmt yuv420p",
-        "-sdp_file /home/cozycast/sdp_answer",
-        "-an -f rtp rtp://"..data.ip..":"..data.audioPort,
-        "-c:a libopus",
-        "-af aresample=async=1000:first_pts=0",
-        "-b:a "..video_settings.audio_bitrate,
-        "-vn -sdp_file /home/cozycast/sdp_answer",
-        "-f rtp rtp://"..data.ip..":"..data.videoPort
+
+    -- Helper to parse "1M" -> 1000 or "500k" -> 500
+    local function parse_bitrate_kbps(str)
+        local num = tonumber(str:match("[%d%.]+"))
+        if str:find("M") then return math.floor(num * 1000) end
+        if str:find("k") then return math.floor(num) end
+        return math.floor(num)
+    end
+    
+    local function parse_bitrate_bps(str)
+         -- Opusenc expects bits per second usually, but we can pass standard int
+         -- 192k -> 192000
+         local num = tonumber(str:match("[%d%.]+"))
+         if str:find("M") then return math.floor(num * 1000000) end
+         if str:find("k") then return math.floor(num * 1000) end
+         return math.floor(num)
+    end
+
+    local video_bitrate_kbps = parse_bitrate_kbps(video_settings.video_bitrate)
+    local audio_bitrate_bps = parse_bitrate_bps(video_settings.audio_bitrate)
+
+    print("worker.lua: Dumping PulseAudio state before capture...")
+    dump_pulse_info()
+
+    local width = video_settings.scale_width
+    local height = video_settings.scale_height
+    local fps = video_settings.frame_rate
+
+    -- ultrafast, veryfast, medium, 
+    local speed_preset = "veryfast"
+
+    -- GStreamer Pipeline Construction
+    -- Video: ximagesrc -> convert -> x264enc -> whipsink
+    -- Audio: pulsesrc -> convert -> opusenc -> whipsink
+    
+    local pipeline_parts = {
+        "whipclientsink name=ws signaller::whip-endpoint=\"" .. whipUrl .. "\" signaller::auth-token=\"" .. streamKey .. "\"",
+        
+        -- Video Branch with a queue
+        "ximagesrc display-name=:0 use-damage=1",
+        "! queue ! video/x-raw,framerate=" .. fps .. "/1",
+        "! videoscale ! video/x-raw,width=" .. width .. ",height=" .. height,
+        "! videoconvert",
+        -- Add qp-min=24 to prevent bit-stuffing on still images
+        "! x264enc tune=zerolatency speed-preset=".. speed_preset .. " bitrate=" .. video_bitrate_kbps .. " qp-min=24 key-int-max=" .. (fps * 2),
+        --"! vp8enc target-bitrate=" .. (video_bitrate_kbps * 1000) .. " deadline=0 cpu-used=4 keyframe-max-dist=" .. (fps * 2),
+        "! ws.video_0",
+
+        -- Audio Branch with a queue
+        "pulsesrc device=CozySink.monitor server=unix:/tmp/pulse-socket",
+        "! queue ! audioconvert",
+        "! opusenc bitrate=" .. audio_bitrate_bps,
+        "! ws.audio_0"
     }
 
-    local options_string = ""
-    for i = 1, #options do
-      options_string = options_string.." "..options[i]
-    end
+    local options_string = table.concat(pipeline_parts, " ")
 
     if debugCozy then
-        print ("worker.lua: /capture.sh "..options_string)
+        print ("worker.lua: /capture.sh " .. options_string)
     end
 
-    print("worker.lua: start capture")
-    os.execute ("/capture.sh "..options_string)
-    repeat
-        local file, error = io.open("/home/cozycast/sdp_answer", "rb")
-        if file then
-            local content = file:read "*a"
-            if debugCozy then
-                print ("worker.lua: "..content);
-                print("worker.lua: "..lunajson.encode{
-                    action = "sdpAnswer",
-                    content = content
-                })
-            end
-            ws:send(lunajson.encode{
-                action = "sdpAnswer",
-                content = content
-            })
-            file:close()
-        else
-            print(error)
-            os.execute("sleep 1")
-        end
-    until file
+    print("worker.lua: starting capture to WHIP Target")
+    os.execute ("/capture.sh " .. options_string)
 end
 
 local last_keepalive = 0
@@ -297,17 +324,33 @@ end
 local active_vm_flag = false
 
 function start_vm() 
-    print("worker.lua: starting vm width: "..video_settings.desktop_width,", height:"..video_settings.desktop_height)
+    print("worker.lua: starting vm and audio")
 
-    os.execute ("Xvfb $DISPLAY -screen 0 "..video_settings.desktop_width.."x"..video_settings.desktop_height.."x24 -nolisten tcp & echo $! >> /worker.pid")
-    os.execute ("sudo -u cozycast pulseaudio --kill")
-    os.execute ("sudo -u cozycast pulseaudio & echo $! >> /worker.pid")
+    -- Start Xvfb
+    os.execute ("Xvfb :0 -screen 0 "..video_settings.desktop_width.."x"..video_settings.desktop_height.."x24 -nolisten tcp & echo $! >> /worker.pid")
+    
+    -- Start PulseAudio with a fixed, anonymous socket
+    os.execute ("sudo -u cozycast pulseaudio --kill 2>/dev/null")
+    os.execute ("sudo -u cozycast pulseaudio --daemonize=no --exit-idle-time=-1 --load='module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse-socket' & echo $! >> /worker.pid")
+    
+    -- Start Desktop
     os.execute ("sudo -u cozycast xfce4-session & echo $! >> /worker.pid")
+    
+    -- Give things time to initialize
     os.execute("sleep 5")
+    
+    -- Configure PulseAudio with a virtual sink
+    print("worker.lua: configuring virtual audio sink")
+    local pulse_cmd = "sudo -u cozycast pactl --server unix:/tmp/pulse-socket "
+    os.execute(pulse_cmd .. "load-module module-null-sink sink_name=CozySink")
+    os.execute(pulse_cmd .. "set-default-sink CozySink")
+    os.execute(pulse_cmd .. "set-default-source CozySink.monitor")
+
+    -- Allow cozycast user to access the X display
+    os.execute("xhost +SI:localuser:cozycast")
 
     xdo = libxdo.xdo_new(nil)
-
-    print("worker.lua: Started VM")
+    print("worker.lua: VM Started Successfully")
 end
 
 local lastCallTimestamp = 0
@@ -316,15 +359,20 @@ function onmessage(ws, data)
         -- skip keepalive response
         return true
     end
-    if data.type == "sdpOffer" then
-        print("worker.lua: sdpOffer")
+    -- 1. Handle WHIP offer from server
+    if data.type == "whipOffer" then
+        print("worker.lua: Received Ingress Offer (WHIP)")
         if not active_vm_flag then 
             start_vm()
             active_vm_flag = true
         end
-        capture(data, ws)
+        print(data)
+        
+        -- Call capture with separated URL and Key
+        capture(data.url, data.key, ws)
         return true
     end
+    
     local currentTime = os.time()
     if currentTime - lastCallTimestamp >= 1 then
         lastCallTimestamp = currentTime
@@ -426,7 +474,7 @@ function start_server()
     end
     print("worker.lua: Connecting to "..url.. " Room: "..room)
     local ws = websocket.new_from_uri(url..room_key)
-    ws:connect()
+    ws:connect(2)
 
     io.stdout:flush()
 
@@ -465,12 +513,14 @@ function start_server()
 end
 
 while true do
-    print(pcall(start_server))
-    if active_vm_flag then 
-        os.execute("echo '' >> /worker.restart")
-        break
+    -- Run the server and catch any errors
+    local status, err = pcall(start_server)
+    if not status then
+        print("worker.lua: Runtime error: " .. tostring(err))
     end
-    print("worker.lua: Restarting lua worker in 5 seconds")
+    
+    -- Just wait 5 seconds and try to reconnect to the websocket.
+    print("worker.lua: Connection lost or timed out. Reconnecting in 5 seconds...")
     os.execute("sleep 5")
 end
 libxdo.xdo_free(xdo)

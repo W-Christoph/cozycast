@@ -42,7 +42,9 @@ dependencies {
     implementation 'org.apache.tika:tika-core:1.23'
     implementation 'org.apache.tika:tika-parsers:1.23'
     implementation "commons-codec:commons-codec:1.13"
-    implementation "org.kurento:kurento-client:6.16.5"
+    
+    //streaming
+    implementation "io.livekit:livekit-server:${livekitVersion}"
 
     //frontend application
     runtimeOnly project(':npm-website')
@@ -53,8 +55,8 @@ application {
 }
 
 java {
-    sourceCompatibility = JavaVersion.toVersion("11")
-    targetCompatibility = JavaVersion.toVersion("11")
+    sourceCompatibility = JavaVersion.toVersion("17")
+    targetCompatibility = JavaVersion.toVersion("17")
 }
 
 graalvmNative.toolchainDetection = false

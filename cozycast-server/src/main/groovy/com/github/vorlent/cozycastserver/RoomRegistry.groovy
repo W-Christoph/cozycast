@@ -1,6 +1,6 @@
 package com.github.vorlent.cozycastserver
 
-import javax.inject.Singleton
+import jakarta.inject.Singleton
 import java.util.concurrent.ConcurrentHashMap
 
 import com.github.vorlent.cozycastserver.domain.RoomPersistence

@@ -12,30 +12,47 @@ services:
         restart: unless-stopped
         volumes:
             - "../data/postgres:/var/lib/postgresql/data"
-    coturn:
-        image: cozycast-coturn:4.5.1-tini
-        build: ../coturn
-        command:
-            - -n
-            - --external-ip="$TURN_IP/$PRIVATE_IP"
-            - --min-port=49160
-            - --max-port=49200
-            - --lt-cred-mech
-            - --fingerprint
-            - --realm=my.realm.org
-            - --use-auth-secret
-            - --static-auth-secret=$TURN_SECRET
-            - --realm=kurento.org
-            - --log-file=stdout
-        network_mode: 'host'
-        tmpfs: '/var/lib/coturn'
+    redis:
+        image: redis:7-alpine
+        ports:
+            - "6379:6379" # Needed if livekit-server is in host mode
+        networks:
+            - internal
         restart: unless-stopped
-    kurento:
-        image: kurento/kurento-media-server:6.17
-        network_mode: 'host'
+
+    livekit-server:
+        image: livekit/livekit-server:latest
+        command: --config /livekit.yaml
+        network_mode: "host"
         environment:
-            KMS_TURN_URL: "$KURENTO_USERNAME:$KURENTO_PASSWORD@$TURN_IP:3478"
-            GST_DEBUG: "Kurento*:4,kms*:4,kmsremb:3"
+            LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+            LIVEKIT_INGRESS_WHIP_BASE_URL: "http://${PUBLIC_IP}:8080/whip"
+        volumes:
+            - "./livekit.yaml:/livekit.yaml"
+        restart: unless-stopped
+
+    livekit-ingress:
+        image: livekit/ingress:latest
+        network_mode: "host"
+        environment:
+            INGRESS_CONFIG_BODY: |
+                api_key: ${LIVEKIT_API_KEY}
+                api_secret: ${LIVEKIT_API_SECRET}
+                ws_url: ws://localhost:7880
+                redis:
+                    address: localhost:6379
+                whip_port: 8080
+                logging:
+                    level: info
+        # for standard compatibility 
+            LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+            LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+        depends_on:
+            - redis
+            - livekit-server
+        restart: unless-stopped
+        depends_on:
+            - redis
         restart: unless-stopped
     cozycast-worker:
         networks:
@@ -51,7 +68,6 @@ services:
             - cozycast
             - internal
         ports:
-          #            - "80:80"
             - "443:443"
         shm_size: 2g
         environment:
@@ -69,6 +85,10 @@ services:
             HTTPS_DOMAIN: $HTTPS_DOMAIN
             NETWORK_INTERFACES: $NETWORK_INTERFACES
             EXTERNAL_IPV4: $PUBLIC_IP
+            LIVEKIT_URL: $LIVEKIT_URL
+            LIVEKIT_API_KEY: $LIVEKIT_API_KEY
+            LIVEKIT_API_SECRET: $LIVEKIT_API_SECRET
+            LIVEKIT_INGRESS_URL: $LIVEKIT_INGRESS_URL
         volumes:
             - "../data/cozycast-server/avatar:/var/cozycast/avatar/"
             - "../data/cozycast-server/image:/var/cozycast/image/"

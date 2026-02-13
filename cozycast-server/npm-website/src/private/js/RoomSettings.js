@@ -235,6 +235,10 @@ export const RoomSettings = ({ }) => {
                                     value={localRoomSettings.videoBitrate}
                                     name='videoBitrate'
                                     onChange={updateRoomSettings}>
+                                    <option value="6M">6 Mb/s</option>
+                                    <option value="5M">5 Mb/s</option>
+                                    <option value="4M">4 Mb/s</option>
+                                    <option value="3M">3 Mb/s</option>
                                     <option value="2M">2 Mb/s</option>
                                     <option value="1M">1 Mb/s</option>
                                     <option value="500k">0.5 Mb/s</option>

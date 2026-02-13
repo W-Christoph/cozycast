@@ -8,7 +8,7 @@ import { TokenStatus, getToken } from '../Authentication'
 import { WebSocketContext } from './WebSocketContext'
 import { createWebsocketState } from './createWebsocketState';
 import { AppStateContext } from '../appstate/AppStateContext';
-import kurentoUtils from 'kurento-utils'
+import { Room, RoomEvent, VideoPresets } from 'livekit-client';
 import { route } from 'preact-router'
 
 
@@ -492,46 +492,8 @@ const rapidPing = (times) => {
     }
 }
 
-//VIDEOSTREAM
-const webrtc_start = (webRtcPeer, onIceCandidate, onOffer, audioOnly, audioOnlyStream) => {
-    fetch("/turn/credential").then((e) => e.json()).then((iceServer) => {
-        var options = {
-            remoteVideo: document.getElementById("video"),
-            mediaConstraints: {
-                audio: true,
-                video: !audioOnly
-            },
-            onicecandidate: onIceCandidate,
-            configuration: {
-                iceServers: [iceServer]
-            }
-        }
-        audioOnlyStream.value = audioOnly
-        webRtcPeer.current = new kurentoUtils.WebRtcPeer.WebRtcPeerRecvonly(options,
-            (error) => {
-                if (error) {
-                    console.log(error);
-                    return;
-                }
-                webRtcPeer.current.generateOffer(onOffer);
-            })
-    });
-}
-
-const webrtc_stop = (webRtcPeer) => {
-    if (webRtcPeer.current) {
-        webRtcPeer.current.dispose();
-        webRtcPeer.current = null;
-    }
-}
-
-const startResponse = (message, webRtcPeer, viewPort, roomSettings) => {
-    webRtcPeer.current.processAnswer(message.sdpAnswer, (error) => {
-        if (error) {
-            console.log(error);
-            return;
-        }
-    });
+// VIDEOSTREAM
+const initStreamSettings = (message, viewPort, roomSettings) => {
     var settings = message.videoSettings
     batch(() => {
         viewPort.value = {
@@ -549,11 +511,52 @@ const startResponse = (message, webRtcPeer, viewPort, roomSettings) => {
     })
 }
 
+const livekit_connect = async (roomRef, token, videoElementId, audioOnly, audioOnlyStream) => {
+    if (roomRef.current) {
+        await roomRef.current.disconnect();
+    }
+
+    const room = new Room({
+        adaptiveStream: false,
+        dynacast: false
+    });
+
+    roomRef.current = room;
+
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        audioOnlyStream.value = audioOnly
+        if (audioOnly && track.kind === 'video') {
+            publication.setSubscribed(false);
+            return;
+        }
+
+        if (track.kind === 'video' || track.kind === 'audio') {
+            track.attach(document.getElementById(videoElementId));
+        }
+    });
+
+    // Use the proper URL format (the SDK handles protocol)
+    var wsProtocol = 'wss'
+    if (document.location.protocol != 'https:') {
+        wsProtocol = 'ws'
+    }
+    const livekitUrl = `${wsProtocol}://${location.hostname}:7880`;
+    await room.connect(livekitUrl, token);
+};
+
+const livekit_disconnect = async (roomRef) => {
+    if (roomRef.current) {
+        await roomRef.current.disconnect();
+        roomRef.current = null;
+    }
+};
+
 
 export const WebSocketProvider = ({ roomId, children, matches }) => {
 
     const { profile, windowTitle, userSettings, muted, loggedIn } = useContext(AppStateContext);
     const socketRef = useRef(null);
+    const livekitRoomRef = useRef(null); // ADD THIS LINE
     const webRtcPeerRef = useRef(null);
     const keepAlive = useRef();
     const reconnectTimer = useRef();
@@ -639,7 +642,6 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                     case 'window_title':
                         windowTitle.value = parsedMessage.title;
                         break;
-
                     //Account events
                     case 'authenticated':
                         authentication(parsedMessage, state.authorization, state.personalPermissions);
@@ -650,7 +652,7 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                         }, 30000);
                         if (!state.videoPaused.value) {
                             console.log("Starting video/audio stream");
-                            webrtc_start(webRtcPeerRef, onIceCandidate, onOffer, userSettings.value.audioOnly, state.audioOnly);
+                            startVideo();
                         } else {
                             console.log("Reconnected, but keeping video paused as per user state.");
                         }
@@ -670,18 +672,17 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                         break;
 
                     //Videostream events
-                    case 'startResponse':
-                        startResponse(parsedMessage, webRtcPeerRef, state.viewPort, state.roomSettings);
+                    case 'init_stream_settings':
+                        initStreamSettings(parsedMessage, state.viewPort, state.roomSettings)
                         break;
-                    case 'iceCandidate':
-                        webRtcPeerRef.current.addIceCandidate(parsedMessage.candidate, function (error) {
-                            if (error) {
-                                console.error('Error iceCandidate: ' + error);
-                                return;
-                            } else {
-                                console.debug("Successful iceCandidate")
-                            }
-                        });
+                    case 'livekitToken':
+                        livekit_connect(
+                            livekitRoomRef,
+                            parsedMessage.token,
+                            'video',
+                            userSettings.value.audioOnly,
+                            state.audioOnly
+                        );
                         break;
                     case 'stop_stream':
                         stopVideo();
@@ -755,7 +756,7 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
             ws.onclose = () => {
                 console.log("Websocket closed", event.reason);
                 document.removeEventListener('visibilitychange', handleVisibilityChange);
-                webrtc_stop(webRtcPeerRef);
+                //webrtc_stop(webRtcPeerRef);
                 clearInterval(keepAlive.current);
 
                 if (!isManualClose.current) {
@@ -824,17 +825,13 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
     }
 
     const startVideo = useCallback(() => {
-        if (!state.videoPaused.value) stopVideo();
-        var videoElement = document.getElementById('video');
-        videoElement.play();
-        webrtc_start(webRtcPeerRef, onIceCandidate, onOffer, userSettings.value.audioOnly, state.audioOnly);
         state.videoPaused.value = false;
+        // Request a new token from the server to initiate connection
+        sendMessage({ action: 'start' });
     }, []);
 
     const stopVideo = useCallback(() => {
-        var videoElement = document.getElementById('video');
-        videoElement.pause();
-        webrtc_stop(webRtcPeerRef);
+        livekit_disconnect(livekitRoomRef);
         state.videoPaused.value = true;
     }, []);
 

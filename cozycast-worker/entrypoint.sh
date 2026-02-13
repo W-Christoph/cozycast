@@ -13,10 +13,15 @@ touch /worker.restart
 
 # run dbus for pulseaudio
 mkdir -p /var/run/dbus
-dbus-uuidgen > /var/lib/dbus/machine-id
-dbus-daemon --config-file=/usr/share/dbus-1/system.conf --print-address
 
-export DISPLAY=":$RANDOM"
+# FIX: Remove stale PID files that prevent DBus from starting on restart
+rm -f /var/run/dbus/pid /run/dbus/pid
+
+dbus-uuidgen > /var/lib/dbus/machine-id
+dbus-daemon --config-file=/usr/share/dbus-1/system.conf --print-address --fork
+
+# FIX: Ensure DISPLAY matches what worker.lua uses (:0)
+export DISPLAY=":0"
 sudo chown cozycast:cozycast /home/cozycast
 
 eval $(luarocks path --bin)
@@ -24,7 +29,8 @@ eval $(luarocks path --bin)
 function restart {
     echo "/entrypoint.sh: restarting"
     if [ -f "/worker.pid" ]; then
-        kill -9 $(cat /worker.pid)
+        # Suppress errors if the process is already dead
+        kill -9 $(cat /worker.pid) 2>/dev/null
         rm /worker.pid
     fi
     (luajit worker.lua) &

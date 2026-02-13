@@ -34,20 +34,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
-import org.kurento.client.EndOfStreamEvent
-import org.kurento.client.ErrorEvent
-import org.kurento.client.EventListener
-import org.kurento.client.IceCandidate
-import org.kurento.client.IceCandidateFoundEvent
-import org.kurento.client.KurentoClient
-import org.kurento.client.MediaPipeline
-import org.kurento.client.MediaState
-import org.kurento.client.MediaStateChangedEvent
-import org.kurento.client.RtpEndpoint
-import org.kurento.client.VideoInfo
-import org.kurento.client.WebRtcEndpoint
-import org.kurento.commons.exception.KurentoException
-import org.kurento.jsonrpc.JsonUtils
 import java.util.regex.Pattern
 import java.util.regex.Matcher
 
@@ -68,7 +54,7 @@ import jakarta.inject.Singleton
 @Singleton
 class WebsocketRoomService {
 
-    private KurentoClient kurento
+    private MediaManager mediaManager
     private WebSocketBroadcaster broadcaster
     private RoomRegistry roomRegistry
     private JwtTokenValidator jwtTokenValidator
@@ -77,13 +63,13 @@ class WebsocketRoomService {
     private final InviteService inviteService
     private final vmLogger
 
-    WebsocketRoomService(WebSocketBroadcaster broadcaster, KurentoClient kurento,
+    WebsocketRoomService(WebSocketBroadcaster broadcaster, MediaManager mediaManager,
         RoomRegistry roomRegistry, JwtTokenValidator jwtTokenValidator,
         UserFetcher userFetcher,RoomPermissionGormService roomPermissionGormService,
         InviteService inviteService) {
+        this.mediaManager = mediaManager
         this.vmLogger = LoggerFactory.getLogger('vm.management')
         this.broadcaster = broadcaster
-        this.kurento = kurento
         this.roomRegistry = roomRegistry
         this.jwtTokenValidator = jwtTokenValidator
         this.userFetcher = userFetcher
@@ -133,42 +119,18 @@ class WebsocketRoomService {
 
     private void start(Room room, WebSocketSession session, Map jsonMessage, String username) {
         final UserSession user = room.users.get(username)
-        user?.release(session.getId())
+        
+        sendMessage(session, new InitStreamSettings(videoSettings: room.videoSettings))
 
-        if (!room.worker) {
-            throw new RuntimeException('NO WORKER FOUND')
-        }
-
-        MediaPipeline pipeline = room.worker.getMediaPipeline(kurento)
-        WebRtcEndpoint webRtcEndpoint = new WebRtcEndpoint.Builder(pipeline).build()
-        if (System.getenv('NETWORK_INTERFACES') != null) {
-            webRtcEndpoint.setNetworkInterfaces(System.getenv('NETWORK_INTERFACES'))
-        }
-        if (System.getenv('EXTERNAL_IPV4') != null) {
-            webRtcEndpoint.setExternalIPv4(System.getenv('EXTERNAL_IPV4'))
-        }
-        user.connections.computeIfPresent(session.getId(), (k, v) -> { v.webRtcEndpoint = webRtcEndpoint; return v });
-
-        room.worker.rtpEndpoint.connect(webRtcEndpoint)
-
-        webRtcEndpoint.addIceCandidateFoundListener(new EventListener<IceCandidateFoundEvent>() {
-
-            public void onEvent(IceCandidateFoundEvent event) {
-                sendMessage(session, new IceCandidateEvent(
-                    candidate: [
-                        candidate: event.candidate.candidate,
-                        sdpMid: event.candidate.sdpMid,
-                        sdpMLineIndex: event.candidate.sdpMLineIndex
-                    ]))
-            }
-
-        })
-
-        String sdpOffer = jsonMessage.sdpOffer
-        String sdpAnswer = webRtcEndpoint.processOffer(sdpOffer)
-        sendMessage(session, new StartResponse(sdpAnswer: sdpAnswer, videoSettings: room.videoSettings))
-
-        webRtcEndpoint.gatherCandidates()
+        // Generate a token for the player
+        String token = mediaManager.getPlayerToken(room.name, username, user.nickname)
+    
+        // Return the token. The frontend client will use this with the LiveKit SDK.
+        sendMessage(session, [
+            action: 'livekitToken',
+            token: token,
+            room: room.name
+        ])
     }
 
     private void typing(Room room, WebSocketSession session, Map jsonMessage, String username) {
@@ -876,6 +838,10 @@ class WebsocketRoomService {
             }
             if (jsonMessage.videoBitrate) {
                 def bitrates = [
+                    '6M': '6M',
+                    '5M': '5M',
+                    '4M': '4M',
+                    '3M': '3M',
                     '2M': '2M',
                     '1M': '1M',
                     '500k': '500k',
@@ -1073,20 +1039,6 @@ class WebsocketRoomService {
         room.removeUser(sessionId)
     }
 
-    private void onIceCandidate(Room room, String sessionId, Map jsonMessage, String username) {
-        UserSession user = room.users.get(username)
-
-        if (user != null) {
-            Map jsonCandidate = jsonMessage.candidate
-            log.info jsonCandidate.toString()
-            IceCandidate candidate = new IceCandidate(
-                jsonCandidate.candidate,
-                jsonCandidate.sdpMid,
-                jsonCandidate.sdpMLineIndex)
-            user.connections.computeIfPresent(sessionId, (k, v) -> { v.webRtcEndpoint?.addIceCandidate(candidate); return v });
-        }
-    }
-
     private void sendPlayEnd(Room room, WebSocketSession session) {
         if (room.users.containsKey(session.getId())) {
             sendMessage(session, new PlayEndEvent())
@@ -1149,8 +1101,9 @@ class WebsocketRoomService {
                         userMuted(currentRoom, session, jsonMessage, username)
                         break
                     case 'start':
+                        log.info "here"
                         start(currentRoom, session, jsonMessage, username)
-                        break
+                        break 
                     case 'stop':
                         stop(currentRoom, sessionId)
                         break
@@ -1219,9 +1172,6 @@ class WebsocketRoomService {
                         break
                     case 'ban':
                         ban(currentRoom, session, jsonMessage, username)
-                        break
-                    case 'onIceCandidate':
-                        onIceCandidate(currentRoom, sessionId, jsonMessage, username)
                         break
                     default:
                         sendError(session, 'Invalid message with action ' + jsonMessage.action)
