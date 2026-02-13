@@ -120,6 +120,8 @@ class WebsocketRoomService {
     private void start(Room room, WebSocketSession session, Map jsonMessage, String username) {
         final UserSession user = room.users.get(username)
         
+        sendMessage(session, new InitStreamSettings(videoSettings: room.videoSettings))
+
         // Generate a token for the player
         String token = mediaManager.getPlayerToken(room.name, username, user.nickname)
     

@@ -199,11 +199,12 @@ function capture(whipUrl, streamKey, ws)
         "whipclientsink name=ws signaller::whip-endpoint=\"" .. whipUrl .. "\" signaller::auth-token=\"" .. streamKey .. "\"",
         
         -- Video Branch with a queue
-        "ximagesrc display-name=:0 use-damage=0",
+        "ximagesrc display-name=:0 use-damage=1",
         "! queue ! video/x-raw,framerate=" .. fps .. "/1",
         "! videoscale ! video/x-raw,width=" .. width .. ",height=" .. height,
         "! videoconvert",
-        "! x264enc tune=zerolatency speed-preset=".. speed_preset .. " bitrate=" .. video_bitrate_kbps .. " key-int-max=" .. (fps * 2),
+        -- Add qp-min=24 to prevent bit-stuffing on still images
+        "! x264enc tune=zerolatency speed-preset=".. speed_preset .. " bitrate=" .. video_bitrate_kbps .. " qp-min=24 key-int-max=" .. (fps * 2),
         --"! vp8enc target-bitrate=" .. (video_bitrate_kbps * 1000) .. " deadline=0 cpu-used=4 keyframe-max-dist=" .. (fps * 2),
         "! ws.video_0",
 

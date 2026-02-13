@@ -493,6 +493,24 @@ const rapidPing = (times) => {
 }
 
 // VIDEOSTREAM
+const initStreamSettings = (message, viewPort, roomSettings) => {
+    var settings = message.videoSettings
+    batch(() => {
+        viewPort.value = {
+            width: settings.desktopWidth,
+            height: settings.desktopHeight
+        };
+        roomSettings.value = {
+            ...roomSettings.value,
+            desktopResolution: settings.desktopHeight,
+            streamResolution: settings.scaleHeight,
+            framerate: settings.framerate,
+            videoBitrate: settings.videoBitrate,
+            audioBitrate: settings.audioBitrate
+        }
+    })
+}
+
 const livekit_connect = async (roomRef, token, videoElementId, audioOnly, audioOnlyStream) => {
     if (roomRef.current) {
         await roomRef.current.disconnect();
@@ -624,15 +642,6 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                     case 'window_title':
                         windowTitle.value = parsedMessage.title;
                         break;
-                    case 'livekitToken':
-                        livekit_connect(
-                            livekitRoomRef,
-                            parsedMessage.token,
-                            'video',
-                            userSettings.value.audioOnly,
-                            state.audioOnly
-                        );
-                        break;
                     //Account events
                     case 'authenticated':
                         authentication(parsedMessage, state.authorization, state.personalPermissions);
@@ -663,6 +672,18 @@ export const WebSocketProvider = ({ roomId, children, matches }) => {
                         break;
 
                     //Videostream events
+                    case 'init_stream_settings':
+                        initStreamSettings(parsedMessage, state.viewPort, state.roomSettings)
+                        break;
+                    case 'livekitToken':
+                        livekit_connect(
+                            livekitRoomRef,
+                            parsedMessage.token,
+                            'video',
+                            userSettings.value.audioOnly,
+                            state.audioOnly
+                        );
+                        break;
                     case 'stop_stream':
                         stopVideo();
                         break;

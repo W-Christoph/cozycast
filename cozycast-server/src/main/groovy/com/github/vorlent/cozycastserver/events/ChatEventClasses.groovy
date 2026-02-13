@@ -2,9 +2,8 @@ package com.github.vorlent.cozycastserver.events
 
 import com.github.vorlent.cozycastserver.*
 
-class StartResponse {
-    String action = "startResponse"
-    String sdpAnswer
+class InitStreamSettings {
+    String action = "init_stream_settings"
     VideoSettings videoSettings
 }
 
